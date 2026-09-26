@@ -1,4 +1,4 @@
-import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+﻿import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls, TransformControls, useGLTF } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -11,11 +11,172 @@ import { footprintExtents, getItemClearances } from '../lib/roomBounds'
 import { resolveItem, useAppStore, type PlacedItem } from '../store/useAppStore'
 
 const MM = 0.001
+/** GÃ¶sterim: ayakta gÃ¶z yÃ¼ksekliÄŸi (metre, zemin y=0) */
+const STAND_EYE = 1.65
+
+function roomSizeM(room: RoomDef) {
+  return { w: room.widthMm * MM, d: room.depthMm * MM, h: room.heightMm * MM }
+}
+
+/** KapÄ± istisnasÄ± yok â€” gÃ¶sterimde kesin oda iÃ§i */
+function clampStandingXZ(room: RoomDef, x: number, z: number, margin = 0.45): [number, number] {
+  const { w, d } = roomSizeM(room)
+  return [
+    THREE.MathUtils.clamp(x, margin, Math.max(margin, w - margin)),
+    THREE.MathUtils.clamp(z, margin, Math.max(margin, d - margin)),
+  ]
+}
 
 /**
- * GLB geometrisini XZ’de orijine ortalar, tabanı y=0’a oturtur.
- * Ölçüm kimlik kök altında yapılmalı (oda / ItemBox transformu yok) —
- * aksi halde dünya kutusu ile yerel position karışır ve model kayar.
+ * GÃ¶sterim kamerasÄ± â€” Orbit tamamen kapalÄ±yken her kare zorla ayakta bakÄ±ÅŸ.
+ */
+function PresentCamera({ room }: { room: RoomDef }) {
+  const on = useAppStore((s) => s.presentationMode)
+  const { camera, gl } = useThree()
+  const yaw = useRef(0)
+  const pitch = useRef(0)
+  const pos = useRef(new THREE.Vector3(NaN, NaN, NaN))
+  const armed = useRef(false)
+  const dragging = useRef(false)
+  const prev = useRef({ x: 0, y: 0 })
+  const euler = useMemo(() => new THREE.Euler(0, 0, 0, 'YXZ'), [])
+  const forward = useMemo(() => new THREE.Vector3(), [])
+  const right = useMemo(() => new THREE.Vector3(), [])
+  const quat = useMemo(() => new THREE.Quaternion(), [])
+
+  const resetStanding = () => {
+    const { w, d } = roomSizeM(room)
+    const x = w * 0.5
+    const z = THREE.MathUtils.clamp(d * 0.3, 0.6, Math.max(0.6, d - 0.6))
+    pos.current.set(x, STAND_EYE, z)
+    // OdanÄ±n +Z yÃ¶nÃ¼ne bak (iÃ§eri)
+    yaw.current = 0
+    pitch.current = 0
+    // Three default looks down -Z; oda +Z'ye doÄŸru bakmak iÃ§in Ï€
+    const lookZ = z < d * 0.5 ? Math.PI : 0
+    yaw.current = lookZ
+    const persp = camera as THREE.PerspectiveCamera
+    if ('fov' in persp) {
+      persp.fov = 72
+      persp.near = 0.05
+      persp.far = 120
+      persp.updateProjectionMatrix()
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (!on) {
+      pos.current.set(NaN, NaN, NaN)
+      return
+    }
+    resetStanding()
+  }, [on, room.id, room.widthMm, room.depthMm])
+
+  useEffect(() => {
+    if (!on) return
+    const el = gl.domElement
+    el.style.cursor = 'grab'
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return
+      armed.current = true
+      dragging.current = false
+      prev.current = { x: e.clientX, y: e.clientY }
+      el.style.cursor = 'grabbing'
+    }
+    const onUp = () => {
+      armed.current = false
+      dragging.current = false
+      el.style.cursor = 'grab'
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!armed.current && !dragging.current) return
+      const dx = e.clientX - prev.current.x
+      const dy = e.clientY - prev.current.y
+      if (armed.current && !dragging.current) {
+        if (Math.abs(dx) + Math.abs(dy) < 2) return
+        dragging.current = true
+        armed.current = false
+      }
+      if (!dragging.current) return
+      prev.current = { x: e.clientX, y: e.clientY }
+      const hh = el.clientHeight || 1
+      yaw.current -= ((2 * Math.PI * dx) / hh) * 0.55
+      pitch.current -= ((2 * Math.PI * dy) / hh) * 0.4
+      pitch.current = Math.max(-0.7, Math.min(0.5, pitch.current))
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      )
+        return
+      const step = e.shiftKey ? 0.3 : 0.15
+      euler.set(pitch.current, yaw.current, 0, 'YXZ')
+      forward.set(0, 0, -1).applyEuler(euler)
+      forward.y = 0
+      if (forward.lengthSq() < 1e-8) forward.set(Math.sin(yaw.current), 0, Math.cos(yaw.current))
+      forward.normalize()
+      right.set(forward.z, 0, -forward.x)
+
+      let moved = false
+      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+        e.preventDefault()
+        pos.current.addScaledVector(forward, step)
+        moved = true
+      } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        pos.current.addScaledVector(forward, -step)
+        moved = true
+      } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+        e.preventDefault()
+        pos.current.addScaledVector(right, -step)
+        moved = true
+      } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+        e.preventDefault()
+        pos.current.addScaledVector(right, step)
+        moved = true
+      }
+      if (!moved) return
+      const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
+      pos.current.set(x, STAND_EYE, z)
+    }
+
+    el.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      el.style.cursor = ''
+      el.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [on, gl, room, euler, forward, right])
+
+  // Orbit'ten sonra Ã§alÄ±ÅŸsÄ±n diye yÃ¼ksek Ã¶ncelik
+  useFrame(() => {
+    if (!useAppStore.getState().presentationMode) return
+    if (!Number.isFinite(pos.current.x)) resetStanding()
+    const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
+    pos.current.set(x, STAND_EYE, z)
+    camera.position.copy(pos.current)
+    euler.set(pitch.current, yaw.current, 0, 'YXZ')
+    quat.setFromEuler(euler)
+    camera.quaternion.copy(quat)
+    camera.up.set(0, 1, 0)
+    camera.updateMatrixWorld(true)
+  }, 100)
+
+  return null
+}
+
+/**
+ * GLB geometrisini XZâ€™de orijine ortalar, tabanÄ± y=0â€™a oturtur.
+ * Ã–lÃ§Ã¼m kimlik kÃ¶k altÄ±nda yapÄ±lmalÄ± (oda / ItemBox transformu yok) â€”
+ * aksi halde dÃ¼nya kutusu ile yerel position karÄ±ÅŸÄ±r ve model kayar.
  */
 function alignModelToFootprint(model: THREE.Object3D): THREE.Box3 {
   model.updateWorldMatrix(true, true)
@@ -28,7 +189,7 @@ function alignModelToFootprint(model: THREE.Object3D): THREE.Box3 {
   return new THREE.Box3().setFromObject(model)
 }
 
-/** Oda mesh’i: min köşeyi (0,0,0)’a oturtur */
+/** Oda meshâ€™i: min kÃ¶ÅŸeyi (0,0,0)â€™a oturtur */
 function alignModelToCorner(model: THREE.Object3D): THREE.Box3 {
   model.updateWorldMatrix(true, true)
   const box = new THREE.Box3().setFromObject(model)
@@ -135,7 +296,7 @@ function CeilingPlane({ room }: { room: RoomDef }) {
   const d = room.depthMm * MM
   const h = room.heightMm * MM
   const color = room.ceilingColor ?? '#f0ece4'
-  // İnce kutu: içeriden (aşağıdan) net görünür
+  // Ä°nce kutu: iÃ§eriden (aÅŸaÄŸÄ±dan) net gÃ¶rÃ¼nÃ¼r
   return (
     <mesh position={[w / 2, h - 0.025, d / 2]} castShadow={false} receiveShadow>
       <boxGeometry args={[w, 0.05, d]} />
@@ -169,7 +330,7 @@ function CeilingLayer({ room }: { room: RoomDef }) {
 
   if (!visible) return null
 
-  // Tam oda GLB varsa varsayılan düz tavanı gösterme; sadece özel tavan modeli
+  // Tam oda GLB varsa varsayÄ±lan dÃ¼z tavanÄ± gÃ¶sterme; sadece Ã¶zel tavan modeli
   if (room.sceneModelUrl && !room.ceilingModelUrl) return null
 
   if (url) {
@@ -199,7 +360,7 @@ function RoomBox({ room }: { room: RoomDef }) {
     setSelectedWall(selectedWall === wall ? null : wall)
   }
 
-  // Tıklanabilir görünmez duvar seçiciler (oda paneli açıkken)
+  // TÄ±klanabilir gÃ¶rÃ¼nmez duvar seÃ§iciler (oda paneli aÃ§Ä±kken)
   const pickers: { wall: WallIndex; pos: [number, number, number]; size: [number, number, number] }[] = [
     { wall: 0, pos: [0, h / 2, -d / 2], size: [w, h, 0.08] },
     { wall: 2, pos: [0, h / 2, d / 2], size: [w, h, 0.08] },
@@ -247,10 +408,11 @@ function RoomBox({ room }: { room: RoomDef }) {
 
 function CameraConfine({ room }: { room: RoomDef }) {
   const locked = useAppStore((s) => s.roomLocked)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const { camera } = useThree()
 
   useFrame(() => {
-    if (!locked) return
+    if (presentationMode || !locked) return
     const [x, y, z] = clampCameraInRoom(room, camera.position.x, camera.position.y, camera.position.z)
     camera.position.set(x, y, z)
   })
@@ -339,7 +501,7 @@ function ItemVisual({ catalog, selected }: { catalog: CatalogItem; selected: boo
       setUrl(null)
       return
     }
-    // Sadece IndexedDB modelleri — eksik /models/*.glb sahneyi çökertmesin
+    // Sadece IndexedDB modelleri â€” eksik /models/*.glb sahneyi Ã§Ã¶kertmesin
     if (raw.startsWith('idb:')) {
       getAssetObjectUrl(raw.slice(4)).then((u) => {
         if (alive) setUrl(u)
@@ -380,6 +542,7 @@ function ItemBox({
   const select = useAppStore((s) => s.select)
   const pending = useAppStore((s) => s.pendingCatalogId)
   const showMeasures = useAppStore((s) => s.showMeasures)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const setItemPose = useAppStore((s) => s.setItemPose)
   const setTransformDragging = useAppStore((s) => s.setTransformDragging)
   const room = useAppStore((s) => s.activeRoom())
@@ -461,11 +624,11 @@ function ItemBox({
       ]}
       onClick={(e: ThreeEvent<MouseEvent>) => {
         e.stopPropagation()
-        if (pending) return
+        if (presentationMode || pending) return
         select(item.uid)
       }}
       onPointerDown={(e) => {
-        if (pending || item.locked) return
+        if (presentationMode || pending || item.locked) return
         e.stopPropagation()
         ;(e.nativeEvent as PointerEvent).stopImmediatePropagation?.()
         select(item.uid)
@@ -478,7 +641,7 @@ function ItemBox({
       {showMeasures && !selected && (
         <Html position={[0, h + 0.12, 0]} center style={{ pointerEvents: 'none' }}>
           <div className="measure-tag">
-            {catalog.widthMm}×{catalog.depthMm}
+            {catalog.widthMm}Ã—{catalog.depthMm}
           </div>
         </Html>
       )}
@@ -488,13 +651,13 @@ function ItemBox({
             <div className="measure-tag measure-clear">Sol {Math.round(clear.leftMm / 10)} cm</div>
           </Html>
           <Html position={[extentX * MM + 0.08, h * 0.45, 0]} center style={{ pointerEvents: 'none' }}>
-            <div className="measure-tag measure-clear">Sağ {Math.round(clear.rightMm / 10)} cm</div>
+            <div className="measure-tag measure-clear">SaÄŸ {Math.round(clear.rightMm / 10)} cm</div>
           </Html>
           <Html position={[0, h * 0.45, -(extentZ * MM + 0.08)]} center style={{ pointerEvents: 'none' }}>
             <div className="measure-tag measure-clear">Arka {Math.round(clear.backMm / 10)} cm</div>
           </Html>
           <Html position={[0, h * 0.45, extentZ * MM + 0.08]} center style={{ pointerEvents: 'none' }}>
-            <div className="measure-tag measure-clear">Ön {Math.round(clear.frontMm / 10)} cm</div>
+            <div className="measure-tag measure-clear">Ã–n {Math.round(clear.frontMm / 10)} cm</div>
           </Html>
           <Html position={[0, -0.1, 0]} center style={{ pointerEvents: 'none' }}>
             <div className="measure-tag measure-clear">Yerden {Math.round(clear.floorMm / 10)} cm</div>
@@ -511,6 +674,7 @@ function ItemBox({
 function FloorPlace() {
   const room = useAppStore((s) => s.activeRoom())
   const pendingId = useAppStore((s) => s.pendingCatalogId)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const addItem = useAppStore((s) => s.addItem)
   const select = useAppStore((s) => s.select)
   const getCatalogById = useAppStore((s) => s.getCatalogById)
@@ -547,7 +711,7 @@ function FloorPlace() {
   }, [pendingId, gl, camera, raycaster, plane, hit, ndc])
 
   useEffect(() => {
-    if (!pendingId) {
+    if (!pendingId || presentationMode) {
       placing.current = false
       ghostRef.current = null
       setGhost(null)
@@ -583,14 +747,16 @@ function FloorPlace() {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [pendingId, pointToPose, addItem, setTransformDragging, gl])
+  }, [pendingId, presentationMode, pointToPose, addItem, setTransformDragging, gl])
 
   useEffect(() => {
-    gl.domElement.style.cursor = pendingId ? 'crosshair' : ''
+    gl.domElement.style.cursor = pendingId && !presentationMode ? 'crosshair' : ''
     return () => {
       gl.domElement.style.cursor = ''
     }
-  }, [pendingId, gl])
+  }, [pendingId, presentationMode, gl])
+
+  if (presentationMode) return null
 
   return (
     <>
@@ -640,18 +806,43 @@ function FloorPlace() {
   )
 }
 
-/** Kamera oda merkezine baksın */
-function CameraRig({ room }: { room: RoomDef }) {
+/** Kamera: dÃ¼zenlemede dÄ±ÅŸarÄ±dan bak; gÃ¶sterimde PresentStance yerleÅŸtirir */
+function CameraRig({
+  room,
+  orbitRef,
+}: {
+  room: RoomDef
+  orbitRef: RefObject<OrbitControlsImpl | null>
+}) {
   const { camera } = useThree()
-  const w = room.widthMm * MM
-  const d = room.depthMm * MM
-  const h = room.heightMm * MM
+  const presentationMode = useAppStore((s) => s.presentationMode)
+  const { w, d, h } = roomSizeM(room)
 
   useLayoutEffect(() => {
+    if (presentationMode) return
+    const oc = orbitRef.current
     camera.position.set(w * 0.75, h * 0.95, d * 1.35)
+    camera.up.set(0, 1, 0)
+    if (oc) {
+      oc.target.set(w / 2, h * 0.25, d / 2)
+      oc.minDistance = 0.01
+      oc.maxDistance = 80
+      oc.minPolarAngle = 0.08
+      oc.maxPolarAngle = Math.PI - 0.08
+      oc.enableZoom = true
+      oc.enablePan = true
+      oc.enableDamping = true
+      oc.enabled = true
+      oc.update()
+    }
     camera.lookAt(w / 2, h * 0.25, d / 2)
-    camera.updateProjectionMatrix()
-  }, [camera, w, d, h, room.id])
+    const persp = camera as THREE.PerspectiveCamera
+    if ('fov' in persp) {
+      persp.fov = 50
+      persp.near = 0.1
+      persp.updateProjectionMatrix()
+    }
+  }, [camera, w, d, h, room, room.id, presentationMode, orbitRef])
 
   return null
 }
@@ -661,6 +852,7 @@ function Scene() {
   const items = useRoomItems()
   const selectedUid = useAppStore((s) => s.selectedUid)
   const transformMode = useAppStore((s) => s.transformMode)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const setItemPose = useAppStore((s) => s.setItemPose)
   const setTransformDragging = useAppStore((s) => s.setTransformDragging)
   const groups = useRef(new Map<string, THREE.Group>())
@@ -674,14 +866,18 @@ function Scene() {
   useEffect(() => {
     if (!selectedUid) {
       setGizmoTarget(null)
-      if (orbitRef.current) orbitRef.current.enabled = true
+      if (orbitRef.current && !presentationMode) orbitRef.current.enabled = true
+      return
+    }
+    if (presentationMode) {
+      setGizmoTarget(null)
       return
     }
     const t = requestAnimationFrame(() => {
       setGizmoTarget(groups.current.get(selectedUid) ?? null)
     })
     return () => cancelAnimationFrame(t)
-  }, [selectedUid, items])
+  }, [selectedUid, items, presentationMode])
 
   const selectedItem = items.find((i) => i.uid === selectedUid)
   const selectedCatalog = selectedItem ? resolveItem(selectedItem) : null
@@ -693,11 +889,12 @@ function Scene() {
       <hemisphereLight args={['#f5f0e8', '#3a4538', 0.45]} />
       <directionalLight position={[5, 9, 4]} intensity={0.85} />
       <directionalLight position={[w / 2, 1.2, d / 2]} intensity={0.35} />
-      <CameraRig room={room} />
+      <CameraRig room={room} orbitRef={orbitRef} />
       <CameraConfine room={room} />
+      <PresentCamera room={room} />
       <RoomEnvironment room={room} />
       <Measures room={room} />
-      <FloorPlace />
+      {!presentationMode && <FloorPlace />}
 
       {items.map((p) => {
         const c = resolveItem(p)
@@ -720,6 +917,7 @@ function Scene() {
         selectedItem &&
         selectedCatalog &&
         !selectedItem.locked &&
+        !presentationMode &&
         transformMode === 'rotate' && (
         <TransformControls
           object={gizmoTarget}
@@ -760,34 +958,37 @@ function Scene() {
         />
       )}
 
-      <OrbitControls
-        ref={orbitRef}
-        makeDefault
-        target={[w / 2, h * 0.25, d / 2]}
-        maxPolarAngle={Math.PI - 0.08}
-        minPolarAngle={0.08}
-        minDistance={0.01}
-        maxDistance={80}
-        zoomSpeed={1.4}
-        rotateSpeed={0.9}
-        panSpeed={0.9}
-        enableDamping
-        dampingFactor={0.08}
-        enableRotate={false}
-      />
-      <OrbitDragAxes orbitRef={orbitRef} />
-      <FocusAim orbitRef={orbitRef} />
-      <ZoomKeys orbitRef={orbitRef} />
-      <WalkKeys orbitRef={orbitRef} />
+      {!presentationMode && (
+        <OrbitControls
+          ref={orbitRef}
+          makeDefault
+          target={[w / 2, h * 0.25, d / 2]}
+          maxPolarAngle={Math.PI - 0.08}
+          minPolarAngle={0.08}
+          minDistance={0.01}
+          maxDistance={80}
+          zoomSpeed={1.4}
+          rotateSpeed={0.9}
+          panSpeed={0.9}
+          enableDamping
+          dampingFactor={0.08}
+          enableRotate={false}
+        />
+      )}
+      {!presentationMode && <OrbitDragAxes orbitRef={orbitRef} />}
+      {!presentationMode && <FocusAim orbitRef={orbitRef} />}
+      {!presentationMode && <ZoomKeys orbitRef={orbitRef} />}
+      {!presentationMode && <WalkKeys orbitRef={orbitRef} />}
     </>
   )
 }
 
-/** Seçim yokken ok tuşlarıyla odada yürü (ileri/geri/sağa/sola) */
+/** SeÃ§im yokken / gÃ¶sterimde ok tuÅŸlarÄ±yla odada yÃ¼rÃ¼ */
 function WalkKeys({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> }) {
   const { camera } = useThree()
   const selectedUid = useAppStore((s) => s.selectedUid)
   const pendingId = useAppStore((s) => s.pendingCatalogId)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const room = useAppStore((s) => s.activeRoom())
   const locked = useAppStore((s) => s.roomLocked)
   const forward = useMemo(() => new THREE.Vector3(), [])
@@ -802,11 +1003,11 @@ function WalkKeys({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
         e.target instanceof HTMLSelectElement
       )
         return
-      if (selectedUid || pendingId) return
+      if (!presentationMode && (selectedUid || pendingId)) return
       const oc = orbitRef.current
-      if (!oc?.enabled) return
+      if (!presentationMode && !oc?.enabled) return
 
-      const step = e.shiftKey ? 0.35 : 0.12
+      const step = e.shiftKey ? 0.28 : presentationMode ? 0.16 : 0.12
       camera.getWorldDirection(forward)
       forward.y = 0
       if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1)
@@ -815,49 +1016,60 @@ function WalkKeys({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
 
       let moved = false
       const delta = new THREE.Vector3()
-      if (e.key === 'ArrowUp') {
+      if (e.key === 'ArrowUp' || (presentationMode && (e.key === 'w' || e.key === 'W'))) {
         e.preventDefault()
         delta.addScaledVector(forward, step)
         moved = true
-      } else if (e.key === 'ArrowDown') {
+      } else if (e.key === 'ArrowDown' || (presentationMode && (e.key === 's' || e.key === 'S'))) {
         e.preventDefault()
         delta.addScaledVector(forward, -step)
         moved = true
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === 'ArrowLeft' || (presentationMode && (e.key === 'a' || e.key === 'A'))) {
         e.preventDefault()
         delta.addScaledVector(right, -step)
         moved = true
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.key === 'ArrowRight' || (presentationMode && (e.key === 'd' || e.key === 'D'))) {
         e.preventDefault()
         delta.addScaledVector(right, step)
         moved = true
       }
       if (!moved) return
 
+      if (presentationMode) {
+        const nx = camera.position.x + delta.x
+        const nz = camera.position.z + delta.z
+        const [x, z] = clampStandingXZ(room, nx, nz)
+        camera.position.set(x, STAND_EYE, z)
+        return
+      }
+
       camera.position.add(delta)
-      oc.target.add(delta)
+      if (oc) oc.target.add(delta)
       if (locked) {
         const [x, y, z] = clampCameraInRoom(room, camera.position.x, camera.position.y, camera.position.z)
         const ox = x - camera.position.x
         const oy = y - camera.position.y
         const oz = z - camera.position.z
         camera.position.set(x, y, z)
-        oc.target.x += ox
-        oc.target.y += oy
-        oc.target.z += oz
+        if (oc) {
+          oc.target.x += ox
+          oc.target.y += oy
+          oc.target.z += oz
+          oc.update()
+        }
+      } else if (oc) {
+        oc.update()
       }
-      oc.update()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [camera, orbitRef, selectedUid, pendingId, room, locked, forward, right, up])
+  }, [camera, orbitRef, selectedUid, pendingId, presentationMode, room, locked, forward, right, up])
 
   return null
 }
 
 /**
- * Orbit sürükleme: yatay ters (sola sürükle → sola dön),
- * dikey doğal (yukarı sürükle → yukarı bak) — OrbitControls tek rotateSpeed ile ikisini ayıramıyor.
+ * Orbit sÃ¼rÃ¼kleme: yatay ters, dikey doÄŸal (dÃ¼zenleme modu)
  */
 function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> }) {
   const { gl, camera } = useThree()
@@ -874,6 +1086,7 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
     const onDown = (e: PointerEvent) => {
       if (e.button !== 0) return
       if (useAppStore.getState().transformDragging) return
+      if (useAppStore.getState().presentationMode) return
       const oc = orbitRef.current
       if (!oc?.enabled) return
       armed.current = true
@@ -885,6 +1098,7 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
       dragging.current = false
     }
     const onMove = (e: PointerEvent) => {
+      if (useAppStore.getState().presentationMode) return
       const oc = orbitRef.current
       if (!oc?.enabled) return
       if (useAppStore.getState().transformDragging) {
@@ -896,7 +1110,6 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
 
       const dx = e.clientX - prev.current.x
       const dy = e.clientY - prev.current.y
-      // Küçük hareket: eşya sürüklemesi transformDragging set edene kadar bekle
       if (armed.current && !dragging.current) {
         if (Math.abs(dx) + Math.abs(dy) < 3) return
         dragging.current = true
@@ -930,7 +1143,7 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
   return null
 }
 
-/** + / - ile yakınlaş-uzaklaş (tekerleğe ek) */
+/** + / - ile yakÄ±nlaÅŸ-uzaklaÅŸ (tekerleÄŸe ek) */
 function ZoomKeys({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -956,7 +1169,7 @@ function ZoomKeys({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
   return null
 }
 
-/** Çift tık / seçimde orbit hedefini noktaya al — priz gibi ayrıntıya zoom için */
+/** Ã‡ift tÄ±k / seÃ§imde orbit hedefini noktaya al â€” priz gibi ayrÄ±ntÄ±ya zoom iÃ§in */
 function FocusAim({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> }) {
   const { gl, camera, scene } = useThree()
   const selectedUid = useAppStore((s) => s.selectedUid)
@@ -964,8 +1177,9 @@ function FocusAim({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
   const raycaster = useMemo(() => new THREE.Raycaster(), [])
   const pointer = useMemo(() => new THREE.Vector2(), [])
 
-  // Seçilen nesneye odaklan
+  // SeÃ§ilen nesneye odaklan
   useEffect(() => {
+    if (useAppStore.getState().presentationMode) return
     if (!selectedUid || !orbitRef.current) return
     const item = items.find((i) => i.uid === selectedUid)
     const c = item ? resolveItem(item) : null
@@ -981,6 +1195,7 @@ function FocusAim({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
     const el = gl.domElement
     const onDbl = (e: MouseEvent) => {
       if (!orbitRef.current) return
+      if (useAppStore.getState().presentationMode) return
       const rect = el.getBoundingClientRect()
       pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
@@ -989,7 +1204,7 @@ function FocusAim({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | null> 
       const hit = hits.find((h) => h.object.visible && h.distance > 0)
       if (!hit) return
       orbitRef.current.target.copy(hit.point)
-      // Kamerayı biraz yaklaştır
+      // KamerayÄ± biraz yaklaÅŸtÄ±r
       const dir = new THREE.Vector3().subVectors(camera.position, hit.point).normalize()
       const dist = Math.max(0.01, Math.min(1.2, camera.position.distanceTo(hit.point) * 0.25))
       camera.position.copy(hit.point).addScaledVector(dir, dist)
@@ -1013,6 +1228,7 @@ export function RoomCanvas() {
     <div className="immer-canvas" ref={wrapRef}>
       <Canvas
         key={room.id}
+        frameloop="always"
         dpr={[1, 1.5]}
         resize={{ scroll: false, debounce: { resize: 0, scroll: 0 } }}
         camera={{

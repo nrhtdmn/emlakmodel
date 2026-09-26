@@ -71,6 +71,14 @@ interface AppState {
   transformDragging: boolean
   /** Kilit: kamera odadan (açık kapı hariç) çıkamaz */
   roomLocked: boolean
+  /** Gösterim: düzenleme kapalı, sadece gezinti */
+  presentationMode: boolean
+  /** Gösterim girerken duvar/kilit yedeği */
+  presentationBackup: {
+    hiddenWalls: (0 | 1 | 2 | 3)[]
+    ceilingVisible: boolean
+    roomLocked: boolean
+  } | null
   selectedWall: 0 | 1 | 2 | 3 | null
   promisedItems: PlacedItem[] | null
   deliveredItems: PlacedItem[] | null
@@ -93,6 +101,7 @@ interface AppState {
   setPoseDetailOpen: (v: boolean) => void
   setTransformDragging: (v: boolean) => void
   setRoomLocked: (v: boolean) => void
+  setPresentationMode: (v: boolean) => void
   setSelectedWall: (w: 0 | 1 | 2 | 3 | null) => void
   setPendingCatalogId: (id: string | null) => void
   select: (uid: string | null) => void
@@ -302,6 +311,8 @@ export const useAppStore = create<AppState>()(
       poseDetailOpen: false,
       transformDragging: false,
       roomLocked: false,
+      presentationMode: false,
+      presentationBackup: null,
       selectedWall: null,
       promisedItems: null,
       deliveredItems: null,
@@ -323,12 +334,25 @@ export const useAppStore = create<AppState>()(
       setTransformMode: (transformMode) => set({ transformMode }),
       setSnapMm: (snapMm) => set({ snapMm }),
       setTimeOfDay: (timeOfDay) => set({ timeOfDay }),
-      setHudOpen: (hudOpen) => set({ hudOpen }),
+      setHudOpen: (hudOpen) => {
+        if (get().presentationMode && hudOpen) return
+        set({ hudOpen })
+      },
       setShowMeasures: (showMeasures) => set({ showMeasures }),
-      setDesignOpen: (designOpen) => set({ designOpen, assetsOpen: designOpen ? false : get().assetsOpen }),
-      setAssetsOpen: (assetsOpen) => set({ assetsOpen, designOpen: assetsOpen ? false : get().designOpen }),
-      setPoseDetailOpen: (poseDetailOpen) => set({ poseDetailOpen }),
+      setDesignOpen: (designOpen) => {
+        if (get().presentationMode && designOpen) return
+        set({ designOpen, assetsOpen: designOpen ? false : get().assetsOpen })
+      },
+      setAssetsOpen: (assetsOpen) => {
+        if (get().presentationMode && assetsOpen) return
+        set({ assetsOpen, designOpen: assetsOpen ? false : get().designOpen })
+      },
+      setPoseDetailOpen: (poseDetailOpen) => {
+        if (get().presentationMode) return
+        set({ poseDetailOpen })
+      },
       setTransformDragging: (transformDragging) => {
+        if (get().presentationMode && transformDragging) return
         // Sürükleme başında bir kez kaydet; ara kareler geçmişe yazılmaz
         if (
           transformDragging &&
@@ -341,16 +365,81 @@ export const useAppStore = create<AppState>()(
         set({ transformDragging })
       },
       setRoomLocked: (roomLocked) => set({ roomLocked }),
-      setSelectedWall: (selectedWall) => set({ selectedWall }),
-      setPendingCatalogId: (pendingCatalogId) =>
-        set({ pendingCatalogId, selectedUid: null, tool: pendingCatalogId ? 'hand' : get().tool }),
-      select: (selectedUid) =>
+      setPresentationMode: (presentationMode) => {
+        if (presentationMode) {
+          if (get().presentationMode) return
+          const room = get().activeRoom()
+          const { house, activeRoomId } = get()
+          const backup = {
+            hiddenWalls: [...(room.hiddenWalls ?? [])] as (0 | 1 | 2 | 3)[],
+            ceilingVisible: room.ceilingVisible !== false,
+            roomLocked: get().roomLocked,
+          }
+          set({
+            house: {
+              ...house,
+              rooms: house.rooms.map((r) =>
+                r.id === activeRoomId
+                  ? { ...r, hiddenWalls: [], ceilingVisible: true }
+                  : r,
+              ),
+            },
+            presentationMode: true,
+            presentationBackup: backup,
+            roomLocked: true,
+            selectedUid: null,
+            pendingCatalogId: null,
+            designOpen: false,
+            assetsOpen: false,
+            hudOpen: false,
+            poseDetailOpen: false,
+            transformDragging: false,
+            selectedWall: null,
+          })
+        } else {
+          const bak = get().presentationBackup
+          const { house, activeRoomId } = get()
+          set({
+            presentationMode: false,
+            presentationBackup: null,
+            roomLocked: bak?.roomLocked ?? false,
+            house: bak
+              ? {
+                  ...house,
+                  rooms: house.rooms.map((r) =>
+                    r.id === activeRoomId
+                      ? {
+                          ...r,
+                          hiddenWalls: bak.hiddenWalls,
+                          ceilingVisible: bak.ceilingVisible,
+                        }
+                      : r,
+                  ),
+                }
+              : house,
+          })
+        }
+      },
+      setSelectedWall: (selectedWall) => {
+        if (get().presentationMode) return
+        set({ selectedWall })
+      },
+      setPendingCatalogId: (pendingCatalogId) => {
+        if (get().presentationMode) return
+        set({ pendingCatalogId, selectedUid: null, tool: pendingCatalogId ? 'hand' : get().tool })
+      },
+      select: (selectedUid) => {
+        if (get().presentationMode) {
+          set({ selectedUid: null, pendingCatalogId: null, poseDetailOpen: false, transformDragging: false })
+          return
+        }
         set({
           selectedUid,
           pendingCatalogId: selectedUid ? null : get().pendingCatalogId,
           poseDetailOpen: false,
           transformDragging: false,
-        }),
+        })
+      },
 
       enterRoom: (roomId) => {
         if (!get().house.rooms.some((r) => r.id === roomId)) return
@@ -497,6 +586,7 @@ export const useAppStore = create<AppState>()(
       },
 
       updateActiveRoom: (partial, opts) => {
+        if (get().presentationMode) return
         if (opts?.history !== false) pushHistory(get)
         const { house, activeRoomId } = get()
         set({
@@ -508,6 +598,7 @@ export const useAppStore = create<AppState>()(
       },
 
       addRoom: () => {
+        if (get().presentationMode) return
         pushHistory(get)
         const { house } = get()
         const last = house.rooms[house.rooms.length - 1]
@@ -533,6 +624,7 @@ export const useAppStore = create<AppState>()(
       removeRoom: (roomId) => {
         const { house, activeRoomId, items } = get()
         if (house.rooms.length <= 1) return
+        if (get().presentationMode) return
         pushHistory(get)
         const rooms = house.rooms.filter((r) => r.id !== roomId)
         set({
@@ -628,6 +720,7 @@ export const useAppStore = create<AppState>()(
       },
 
       addItem: (catalogId, xMm, yMm) => {
+        if (get().presentationMode) return
         const c = get().getCatalogById(catalogId)
         if (!c) return
         if (c.category === 'duvar' && c.unit === 'm2') {
@@ -669,6 +762,7 @@ export const useAppStore = create<AppState>()(
       },
 
       moveItem: (id, xMm, yMm) => {
+        if (get().presentationMode) return
         if (!get().transformDragging) pushHistory(get)
         const room = get().activeRoom()
         const { items, snapMm } = get()
@@ -695,6 +789,7 @@ export const useAppStore = create<AppState>()(
       },
 
       setItemPose: (id, xMm, yMm, elevMm, rotation, pitch, roll) => {
+        if (get().presentationMode) return
         if (!get().transformDragging) pushHistory(get)
         const room = get().activeRoom()
         const snapMm = get().snapMm
@@ -721,6 +816,7 @@ export const useAppStore = create<AppState>()(
       },
 
       nudgeItem: (id, dxMm, dyMm, dElevMm = 0) => {
+        if (get().presentationMode) return
         const item = get().items.find((p) => p.uid === id)
         if (!item || item.locked) return
         const step = get().snapMm
@@ -736,6 +832,7 @@ export const useAppStore = create<AppState>()(
       },
 
       nudgeRotate: (id, dYaw = 0, dPitch = 0, dRoll = 0) => {
+        if (get().presentationMode) return
         const item = get().items.find((p) => p.uid === id)
         if (!item || item.locked) return
         get().setItemPose(
@@ -754,6 +851,7 @@ export const useAppStore = create<AppState>()(
       },
 
       removeItem: (id) => {
+        if (get().presentationMode) return
         pushHistory(get)
         set({
           items: get().items.filter((p) => p.uid !== id),
@@ -762,6 +860,7 @@ export const useAppStore = create<AppState>()(
       },
 
       applyPaint: (catalogId) => {
+        if (get().presentationMode) return
         const c = CATALOG.find((i) => i.id === catalogId)
         if (!c) return
         pushHistory(get)
@@ -801,6 +900,7 @@ export const useAppStore = create<AppState>()(
       },
 
       applyFloor: (catalogId) => {
+        if (get().presentationMode) return
         const c = CATALOG.find((i) => i.id === catalogId)
         if (!c) return
         pushHistory(get)
@@ -879,6 +979,8 @@ export const useAppStore = create<AppState>()(
           viewMode: 'live',
           proofMode: 'vaat',
           roomLocked: false,
+          presentationMode: false,
+          presentationBackup: null,
           selectedWall: null,
           designOpen: false,
           assetsOpen: false,
@@ -913,6 +1015,7 @@ export const useAppStore = create<AppState>()(
       canRedo: () => historyFuture.length > 0,
 
       undo: () => {
+        if (get().presentationMode) return
         if (!historyPast.length) return
         historyFuture.push(cloneDoc(get()))
         const snap = historyPast.pop()!
@@ -931,6 +1034,7 @@ export const useAppStore = create<AppState>()(
       },
 
       redo: () => {
+        if (get().presentationMode) return
         if (!historyFuture.length) return
         historyPast.push(cloneDoc(get()))
         const snap = historyFuture.pop()!
@@ -967,6 +1071,10 @@ export const useAppStore = create<AppState>()(
         ...current,
         ...(persisted as object),
         snapMm: 10,
+        // Yeşil ekran / bozuk oturum: her yüklemede düzenleme modunda başla
+        presentationMode: false,
+        presentationBackup: null,
+        transformDragging: false,
       }),
     },
   ),

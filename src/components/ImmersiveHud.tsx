@@ -49,6 +49,8 @@ export function ImmersiveHud() {
   const setPoseDetailOpen = useAppStore((s) => s.setPoseDetailOpen)
   const roomLocked = useAppStore((s) => s.roomLocked)
   const setRoomLocked = useAppStore((s) => s.setRoomLocked)
+  const presentationMode = useAppStore((s) => s.presentationMode)
+  const setPresentationMode = useAppStore((s) => s.setPresentationMode)
   const undo = useAppStore((s) => s.undo)
   const redo = useAppStore((s) => s.redo)
   const resetProject = useAppStore((s) => s.resetProject)
@@ -73,9 +75,14 @@ export function ImmersiveHud() {
         redo()
         return
       }
-      if (e.key === 'w' || e.key === 'W') setTransformMode('translate')
-      if (e.key === 'e' || e.key === 'E') setTransformMode('rotate')
+      if (e.key === 'w' || e.key === 'W') {
+        if (!presentationMode) setTransformMode('translate')
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        if (!presentationMode) setTransformMode('rotate')
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedUid) {
+        if (presentationMode) return
         e.preventDefault()
         removeItem(selectedUid)
       }
@@ -83,7 +90,7 @@ export function ImmersiveHud() {
         toggleWallHidden((Number(e.key) - 1) as WallIndex)
       }
       if (e.key === '5') setCeilingVisible(!isCeilingVisible(room))
-      if (selectedUid) {
+      if (selectedUid && !presentationMode) {
         if (e.key === 'ArrowLeft') {
           e.preventDefault()
           if (transformMode === 'rotate') nudgeRotate(selectedUid, e.shiftKey ? 0 : -5, 0, e.shiftKey ? -5 : 0)
@@ -124,6 +131,7 @@ export function ImmersiveHud() {
     setPoseDetailOpen,
     undo,
     redo,
+    presentationMode,
   ])
 
   const catTabs = [
@@ -164,17 +172,34 @@ export function ImmersiveHud() {
           ←
         </Link>
 
-        <button type="button" className="immer-toggle" onClick={() => setHudOpen(!hudOpen)}>
-          {hudOpen ? 'Katalog' : '+ Ekle'}
-        </button>
-
         <button
           type="button"
-          className={`immer-toggle ${assetsOpen ? 'on' : ''}`}
-          onClick={() => setAssetsOpen(!assetsOpen)}
+          className={`immer-toggle ${presentationMode ? 'on' : ''}`}
+          title={
+            presentationMode
+              ? 'Gösterim açık — düzenleme kapalı'
+              : 'Gösterim modu — sadece gezinti'
+          }
+          onClick={() => setPresentationMode(!presentationMode)}
         >
-          Modeller
+          {presentationMode ? 'Gösterim ✓' : 'Gösterim'}
         </button>
+
+        {!presentationMode && (
+          <>
+            <button type="button" className="immer-toggle" onClick={() => setHudOpen(!hudOpen)}>
+              {hudOpen ? 'Katalog' : '+ Ekle'}
+            </button>
+
+            <button
+              type="button"
+              className={`immer-toggle ${assetsOpen ? 'on' : ''}`}
+              onClick={() => setAssetsOpen(!assetsOpen)}
+            >
+              Modeller
+            </button>
+          </>
+        )}
 
         <div className="immer-rooms">
           {house.rooms.map((r) => (
@@ -189,36 +214,40 @@ export function ImmersiveHud() {
           ))}
         </div>
 
-        <button
-          type="button"
-          className="immer-toggle"
-          title="Yeni proje — odalar sıfırlanır, modeller kalır"
-          onClick={() => {
-            if (
-              window.confirm(
-                'Yeni proje başlatılsın mı?\n\nOdalar, ev ve yerleşimler silinir.\nYüklediğiniz katalog modelleri kalır.',
-              )
-            ) {
-              resetProject()
-            }
-          }}
-        >
-          Sıfırla
-        </button>
-        <button
-          type="button"
-          className={`immer-toggle ${showMeasures ? 'on' : ''}`}
-          onClick={() => setShowMeasures(!showMeasures)}
-        >
-          Ölçü
-        </button>
-        <button
-          type="button"
-          className={`immer-toggle ${designOpen ? 'on' : ''}`}
-          onClick={() => setDesignOpen(!designOpen)}
-        >
-          Oda
-        </button>
+        {!presentationMode && (
+          <>
+            <button
+              type="button"
+              className="immer-toggle"
+              title="Yeni proje — odalar sıfırlanır, modeller kalır"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Yeni proje başlatılsın mı?\n\nOdalar, ev ve yerleşimler silinir.\nYüklediğiniz katalog modelleri kalır.',
+                  )
+                ) {
+                  resetProject()
+                }
+              }}
+            >
+              Sıfırla
+            </button>
+            <button
+              type="button"
+              className={`immer-toggle ${showMeasures ? 'on' : ''}`}
+              onClick={() => setShowMeasures(!showMeasures)}
+            >
+              Ölçü
+            </button>
+            <button
+              type="button"
+              className={`immer-toggle ${designOpen ? 'on' : ''}`}
+              onClick={() => setDesignOpen(!designOpen)}
+            >
+              Oda
+            </button>
+          </>
+        )}
         <button
           type="button"
           className={`immer-toggle ${roomLocked ? 'on' : ''}`}
@@ -252,7 +281,7 @@ export function ImmersiveHud() {
         </button>
       </div>
 
-      {hudOpen && (
+      {hudOpen && !presentationMode && (
         <div className="immer-panel immer-panel-fixed">
           <div className="immer-cats">
             {catTabs.map((c) => (
@@ -363,10 +392,17 @@ export function ImmersiveHud() {
         </div>
       )}
 
-      {assetsOpen && <AssetsPanel />}
-      {designOpen && <HouseDesignPanel />}
+      {assetsOpen && !presentationMode && <AssetsPanel />}
+      {designOpen && !presentationMode && <HouseDesignPanel />}
 
-      {(pending || selected) && (
+      {presentationMode && (
+        <div className="immer-status immer-present">
+          <strong>Gösterim · göz hizası</strong>
+          <span>Sürükle bak · WASD yürü</span>
+        </div>
+      )}
+
+      {!presentationMode && (pending || selected) && (
         <div className="immer-status">
           {pending && (
             <>
