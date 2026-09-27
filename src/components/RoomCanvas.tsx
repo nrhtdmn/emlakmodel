@@ -823,7 +823,7 @@ function FloorPlace() {
   )
 }
 
-/** Duzenleme: odanin disindan 3/4 bakis. Gosterimde PresentCamera yazar. */
+/** Duzenleme: yuksek koseden oda icine bak (duvar dis yuzeyi degil). */
 function CameraRig({
   room,
   orbitRef,
@@ -839,11 +839,11 @@ function CameraRig({
   const applyExterior = () => {
     const oc = orbitRef.current
     const tx = w * 0.5
-    const ty = h * 0.28
+    const ty = h * 0.12
     const tz = d * 0.5
-    // Guvenli mesafe: odaya yapismasin (yesil/gri duvar ekrani)
-    const dist = Math.max(4.5, Math.max(w, d) * 1.15)
-    camera.position.set(tx + dist * 0.42, Math.max(h * 0.75, 2.2), tz + dist * 0.78)
+    // Yuksek koseden bak: duvar dis yuzeyi ekrani doldurmasin
+    const span = Math.max(w, d)
+    camera.position.set(tx + span * 0.55, Math.max(h * 1.55, span * 0.7), tz + span * 0.72)
     camera.up.set(0, 1, 0)
     const persp = camera as THREE.PerspectiveCamera
     if ('fov' in persp) {
@@ -854,10 +854,10 @@ function CameraRig({
     }
     if (oc) {
       oc.target.set(tx, ty, tz)
-      oc.minDistance = Math.max(1.8, Math.min(w, d) * 0.35)
-      oc.maxDistance = Math.max(28, dist * 3)
-      oc.minPolarAngle = 0.25
-      oc.maxPolarAngle = Math.PI * 0.48
+      oc.minDistance = Math.max(2.5, span * 0.45)
+      oc.maxDistance = Math.max(32, span * 4)
+      oc.minPolarAngle = 0.2
+      oc.maxPolarAngle = Math.PI * 0.42
       oc.enableZoom = true
       oc.enablePan = true
       oc.enableDamping = true
@@ -874,8 +874,7 @@ function CameraRig({
       return
     }
     applyExterior()
-    // OrbitControls ilk karelerde kamerayi ezmesin
-    applyUntil.current = performance.now() + 400
+    applyUntil.current = performance.now() + 500
   }, [camera, w, d, h, room.id, presentationMode, orbitRef])
 
   useFrame(() => {
@@ -1001,11 +1000,11 @@ function Scene() {
       <OrbitControls
         ref={orbitRef}
         makeDefault
-        target={[w / 2, h * 0.28, d / 2]}
-        maxPolarAngle={Math.PI * 0.48}
-        minPolarAngle={0.25}
-        minDistance={Math.max(1.8, Math.min(w, d) * 0.35)}
-        maxDistance={Math.max(28, Math.max(w, d) * 3.5)}
+        target={[w / 2, h * 0.12, d / 2]}
+        maxPolarAngle={Math.PI * 0.42}
+        minPolarAngle={0.2}
+        minDistance={Math.max(2.5, Math.max(w, d) * 0.45)}
+        maxDistance={Math.max(32, Math.max(w, d) * 4)}
         zoomSpeed={1.2}
         rotateSpeed={0.9}
         panSpeed={0.9}
@@ -1263,7 +1262,7 @@ export function RoomCanvas() {
   const d = room.depthMm * MM
   const h = room.heightMm * MM
   const wrapRef = useRef<HTMLDivElement>(null)
-  const dist = Math.max(4.5, Math.max(w, d) * 1.15)
+  const span = Math.max(w, d)
 
   return (
     <div className="immer-canvas" ref={wrapRef}>
@@ -1273,14 +1272,14 @@ export function RoomCanvas() {
         dpr={[1, 1.5]}
         resize={{ scroll: false, debounce: { resize: 0, scroll: 0 } }}
         camera={{
-          position: [w * 0.5 + dist * 0.42, Math.max(h * 0.75, 2.2), d * 0.5 + dist * 0.78],
+          position: [w * 0.5 + span * 0.55, Math.max(h * 1.55, span * 0.7), d * 0.5 + span * 0.72],
           fov: 50,
           near: 0.05,
           far: 120,
         }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false }}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
         onCreated={({ camera, gl }) => {
-          camera.lookAt(w / 2, h * 0.28, d / 2)
+          camera.lookAt(w / 2, h * 0.12, d / 2)
           gl.setClearColor('#2a3330', 1)
         }}
       >
