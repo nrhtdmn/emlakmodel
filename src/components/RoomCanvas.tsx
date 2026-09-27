@@ -254,6 +254,15 @@ function RoomSceneGlb({ url }: { url: string }) {
 
 function RoomEnvironment({ room }: { room: RoomDef }) {
   const [url, setUrl] = useState<string | null>(null)
+  const presentationMode = useAppStore((s) => s.presentationMode)
+  // Duzenleme: on+sag duvari kes (varsayilan kamera kosesi) — dis yuzey ekrani engeller
+  const viewRoom = useMemo(() => {
+    if (presentationMode) return room
+    const hidden = new Set<0 | 1 | 2 | 3>(room.hiddenWalls ?? [])
+    hidden.add(1)
+    hidden.add(2)
+    return { ...room, hiddenWalls: [...hidden] }
+  }, [room, presentationMode])
 
   useEffect(() => {
     let alive = true
@@ -277,13 +286,13 @@ function RoomEnvironment({ room }: { room: RoomDef }) {
   return (
     <>
       {url ? (
-        <GlbSafe fallback={<RoomBox room={room} />}>
-          <Suspense fallback={<RoomBox room={room} />}>
+        <GlbSafe fallback={<RoomBox room={viewRoom} />}>
+          <Suspense fallback={<RoomBox room={viewRoom} />}>
             <RoomSceneGlb url={url} />
           </Suspense>
         </GlbSafe>
       ) : (
-        <RoomBox room={room} />
+        <RoomBox room={viewRoom} />
       )}
       {/* Duzenlemede tavan dis kamerayi kapatiyordu (gri/yesil ekran). Gosterimde acilir. */}
       <CeilingLayer room={room} editCutaway />
@@ -845,22 +854,22 @@ function CameraRig({
     const tx = w * 0.5
     const ty = h * 0.12
     const tz = d * 0.5
-    // Yuksek koseden bak: oda icine (tavan duzenlemede kapali)
+    // Dollhouse: duvar ustunden oda icine bak
     const span = Math.max(w, d)
-    camera.position.set(tx + span * 0.62, Math.max(h * 1.25, span * 0.55), tz + span * 0.8)
+    camera.position.set(tx + span * 0.7, Math.max(h * 2.1, span * 1.05), tz + span * 0.85)
     camera.up.set(0, 1, 0)
     const persp = camera as THREE.PerspectiveCamera
     if ('fov' in persp) {
-      persp.fov = 50
+      persp.fov = 45
       persp.near = 0.05
       persp.far = 120
       persp.updateProjectionMatrix()
     }
     if (oc) {
       oc.target.set(tx, ty, tz)
-      oc.minDistance = Math.max(2.5, span * 0.45)
-      oc.maxDistance = Math.max(32, span * 4)
-      oc.minPolarAngle = 0.2
+      oc.minDistance = Math.max(3, span * 0.55)
+      oc.maxDistance = Math.max(40, span * 5)
+      oc.minPolarAngle = 0.35
       oc.maxPolarAngle = Math.PI * 0.42
       oc.enableZoom = true
       oc.enablePan = true
@@ -1006,9 +1015,9 @@ function Scene() {
         makeDefault
         target={[w / 2, h * 0.12, d / 2]}
         maxPolarAngle={Math.PI * 0.42}
-        minPolarAngle={0.2}
-        minDistance={Math.max(2.5, Math.max(w, d) * 0.45)}
-        maxDistance={Math.max(32, Math.max(w, d) * 4)}
+        minPolarAngle={0.35}
+        minDistance={Math.max(3, Math.max(w, d) * 0.55)}
+        maxDistance={Math.max(40, Math.max(w, d) * 5)}
         zoomSpeed={1.2}
         rotateSpeed={0.9}
         panSpeed={0.9}
@@ -1167,7 +1176,7 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
       spherical.setFromVector3(offset)
       spherical.theta += ((2 * Math.PI * dx) / h) * speed
       spherical.phi -= ((2 * Math.PI * dy) / h) * speed
-      spherical.phi = Math.max(0.2, Math.min(Math.PI * 0.42, spherical.phi))
+      spherical.phi = Math.max(0.35, Math.min(Math.PI * 0.42, spherical.phi))
       offset.setFromSpherical(spherical)
       camera.position.copy(oc.target).add(offset)
       oc.update()
@@ -1276,8 +1285,8 @@ export function RoomCanvas() {
         dpr={[1, 1.5]}
         resize={{ scroll: false, debounce: { resize: 0, scroll: 0 } }}
         camera={{
-          position: [w * 0.5 + span * 0.62, Math.max(h * 1.25, span * 0.55), d * 0.5 + span * 0.8],
-          fov: 50,
+          position: [w * 0.5 + span * 0.7, Math.max(h * 2.1, span * 1.05), d * 0.5 + span * 0.85],
+          fov: 45,
           near: 0.05,
           far: 120,
         }}
