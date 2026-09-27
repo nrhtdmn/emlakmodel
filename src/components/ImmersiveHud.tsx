@@ -398,7 +398,7 @@ export function ImmersiveHud() {
       {presentationMode && (
         <div className="immer-status immer-present">
           <strong>Gösterim · göz hizası</strong>
-          <span>Sürükle bak · Shift+↑↓ ileri/geri · ↑↓ aşağı/yukarı · ←→ yan</span>
+          <span>Sürükle bak · ↑↓ ileri/geri · Shift+↑↓ yukarı/aşağı · ←→ yan</span>
         </div>
       )}
 

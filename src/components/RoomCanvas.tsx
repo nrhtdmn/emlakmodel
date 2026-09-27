@@ -143,16 +143,16 @@ function PresentCamera({
       right.set(forward.z, 0, -forward.x)
       let moved = false
 
-      // Shift+↑↓: ileri/geri · ↑↓: aşağı/yukarı · ←→: yan
+      // ↑↓: ileri/geri · Shift+↑↓: yukarı/aşağı · ←→: yan
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        if (e.shiftKey) pos.current.addScaledVector(forward, step)
-        else pos.current.y += vert
+        if (e.shiftKey) pos.current.y += vert
+        else pos.current.addScaledVector(forward, step)
         moved = true
       } else if (e.key === 'ArrowDown') {
         e.preventDefault()
-        if (e.shiftKey) pos.current.addScaledVector(forward, -step)
-        else pos.current.y -= vert
+        if (e.shiftKey) pos.current.y -= vert
+        else pos.current.addScaledVector(forward, -step)
         moved = true
       } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
         e.preventDefault()
