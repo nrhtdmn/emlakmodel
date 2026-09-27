@@ -1,4 +1,4 @@
-﻿import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Component, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Html, OrbitControls, TransformControls, useGLTF } from '@react-three/drei'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -11,14 +11,13 @@ import { footprintExtents, getItemClearances } from '../lib/roomBounds'
 import { resolveItem, useAppStore, type PlacedItem } from '../store/useAppStore'
 
 const MM = 0.001
-/** GÃ¶sterim: ayakta gÃ¶z yÃ¼ksekliÄŸi (metre, zemin y=0) */
+/** Gosterim: ayakta goz yuksekligi (metre, zemin y=0) */
 const STAND_EYE = 1.65
 
 function roomSizeM(room: RoomDef) {
   return { w: room.widthMm * MM, d: room.depthMm * MM, h: room.heightMm * MM }
 }
 
-/** KapÄ± istisnasÄ± yok â€” gÃ¶sterimde kesin oda iÃ§i */
 function clampStandingXZ(room: RoomDef, x: number, z: number, margin = 0.45): [number, number] {
   const { w, d } = roomSizeM(room)
   return [
@@ -27,15 +26,20 @@ function clampStandingXZ(room: RoomDef, x: number, z: number, margin = 0.45): [n
   ]
 }
 
-/**
- * GÃ¶sterim kamerasÄ± â€” Orbit tamamen kapalÄ±yken her kare zorla ayakta bakÄ±ÅŸ.
- */
-function PresentCamera({ room }: { room: RoomDef }) {
+/** Gosterim: Orbit sahneede kalir; kamera ayakta tutulur */
+function PresentCamera({
+  room,
+  orbitRef,
+}: {
+  room: RoomDef
+  orbitRef: RefObject<OrbitControlsImpl | null>
+}) {
   const on = useAppStore((s) => s.presentationMode)
   const { camera, gl } = useThree()
   const yaw = useRef(0)
   const pitch = useRef(0)
-  const pos = useRef(new THREE.Vector3(NaN, NaN, NaN))
+  const ready = useRef(false)
+  const pos = useRef(new THREE.Vector3())
   const armed = useRef(false)
   const dragging = useRef(false)
   const prev = useRef({ x: 0, y: 0 })
@@ -49,34 +53,45 @@ function PresentCamera({ room }: { room: RoomDef }) {
     const x = w * 0.5
     const z = THREE.MathUtils.clamp(d * 0.3, 0.6, Math.max(0.6, d - 0.6))
     pos.current.set(x, STAND_EYE, z)
-    // OdanÄ±n +Z yÃ¶nÃ¼ne bak (iÃ§eri)
-    yaw.current = 0
     pitch.current = 0
-    // Three default looks down -Z; oda +Z'ye doÄŸru bakmak iÃ§in Ï€
-    const lookZ = z < d * 0.5 ? Math.PI : 0
-    yaw.current = lookZ
+    yaw.current = z < d * 0.5 ? Math.PI : 0
+    ready.current = true
     const persp = camera as THREE.PerspectiveCamera
     if ('fov' in persp) {
-      persp.fov = 72
-      persp.near = 0.05
-      persp.far = 120
+      persp.fov = 70
+      persp.near = 0.1
+      persp.far = 200
       persp.updateProjectionMatrix()
+    }
+    const oc = orbitRef.current
+    if (oc) {
+      oc.enabled = false
+      oc.enableDamping = false
     }
   }
 
   useLayoutEffect(() => {
+    const oc = orbitRef.current
     if (!on) {
-      pos.current.set(NaN, NaN, NaN)
+      ready.current = false
+      if (oc) {
+        oc.enabled = true
+        oc.enableDamping = true
+      }
+      const persp = camera as THREE.PerspectiveCamera
+      if ('fov' in persp) {
+        persp.fov = 50
+        persp.updateProjectionMatrix()
+      }
       return
     }
     resetStanding()
-  }, [on, room.id, room.widthMm, room.depthMm])
+  }, [on, room.id, room.widthMm, room.depthMm, camera, orbitRef])
 
   useEffect(() => {
     if (!on) return
     const el = gl.domElement
     el.style.cursor = 'grab'
-
     const onDown = (e: PointerEvent) => {
       if (e.button !== 0) return
       armed.current = true
@@ -112,6 +127,7 @@ function PresentCamera({ room }: { room: RoomDef }) {
         e.target instanceof HTMLSelectElement
       )
         return
+      if (!ready.current) return
       const step = e.shiftKey ? 0.3 : 0.15
       euler.set(pitch.current, yaw.current, 0, 'YXZ')
       forward.set(0, 0, -1).applyEuler(euler)
@@ -119,7 +135,6 @@ function PresentCamera({ room }: { room: RoomDef }) {
       if (forward.lengthSq() < 1e-8) forward.set(Math.sin(yaw.current), 0, Math.cos(yaw.current))
       forward.normalize()
       right.set(forward.z, 0, -forward.x)
-
       let moved = false
       if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
         e.preventDefault()
@@ -142,7 +157,6 @@ function PresentCamera({ room }: { room: RoomDef }) {
       const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
       pos.current.set(x, STAND_EYE, z)
     }
-
     el.addEventListener('pointerdown', onDown)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointermove', onMove)
@@ -156,10 +170,10 @@ function PresentCamera({ room }: { room: RoomDef }) {
     }
   }, [on, gl, room, euler, forward, right])
 
-  // Orbit'ten sonra Ã§alÄ±ÅŸsÄ±n diye yÃ¼ksek Ã¶ncelik
   useFrame(() => {
-    if (!useAppStore.getState().presentationMode) return
-    if (!Number.isFinite(pos.current.x)) resetStanding()
+    if (!on || !ready.current) return
+    const oc = orbitRef.current
+    if (oc) oc.enabled = false
     const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
     pos.current.set(x, STAND_EYE, z)
     camera.position.copy(pos.current)
@@ -167,17 +181,11 @@ function PresentCamera({ room }: { room: RoomDef }) {
     quat.setFromEuler(euler)
     camera.quaternion.copy(quat)
     camera.up.set(0, 1, 0)
-    camera.updateMatrixWorld(true)
-  }, 100)
+  })
 
   return null
 }
 
-/**
- * GLB geometrisini XZâ€™de orijine ortalar, tabanÄ± y=0â€™a oturtur.
- * Ã–lÃ§Ã¼m kimlik kÃ¶k altÄ±nda yapÄ±lmalÄ± (oda / ItemBox transformu yok) â€”
- * aksi halde dÃ¼nya kutusu ile yerel position karÄ±ÅŸÄ±r ve model kayar.
- */
 function alignModelToFootprint(model: THREE.Object3D): THREE.Box3 {
   model.updateWorldMatrix(true, true)
   const box = new THREE.Box3().setFromObject(model)
@@ -891,7 +899,7 @@ function Scene() {
       <directionalLight position={[w / 2, 1.2, d / 2]} intensity={0.35} />
       <CameraRig room={room} orbitRef={orbitRef} />
       <CameraConfine room={room} />
-      <PresentCamera room={room} />
+      <PresentCamera room={room} orbitRef={orbitRef} />
       <RoomEnvironment room={room} />
       <Measures room={room} />
       {!presentationMode && <FloorPlace />}
@@ -958,23 +966,23 @@ function Scene() {
         />
       )}
 
-      {!presentationMode && (
-        <OrbitControls
-          ref={orbitRef}
-          makeDefault
-          target={[w / 2, h * 0.25, d / 2]}
-          maxPolarAngle={Math.PI - 0.08}
-          minPolarAngle={0.08}
-          minDistance={0.01}
-          maxDistance={80}
-          zoomSpeed={1.4}
-          rotateSpeed={0.9}
-          panSpeed={0.9}
-          enableDamping
-          dampingFactor={0.08}
-          enableRotate={false}
-        />
-      )}
+      <OrbitControls
+        ref={orbitRef}
+        makeDefault
+        target={[w / 2, h * 0.25, d / 2]}
+        maxPolarAngle={Math.PI - 0.08}
+        minPolarAngle={0.08}
+        minDistance={0.01}
+        maxDistance={80}
+        zoomSpeed={1.4}
+        rotateSpeed={0.9}
+        panSpeed={0.9}
+        enableDamping={!presentationMode}
+        dampingFactor={0.08}
+        enableRotate={false}
+        enablePan={!presentationMode}
+        enableZoom={!presentationMode}
+      />
       {!presentationMode && <OrbitDragAxes orbitRef={orbitRef} />}
       {!presentationMode && <FocusAim orbitRef={orbitRef} />}
       {!presentationMode && <ZoomKeys orbitRef={orbitRef} />}
