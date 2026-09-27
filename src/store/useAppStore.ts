@@ -1065,16 +1065,19 @@ export const useAppStore = create<AppState>()(
         deliveredItems: s.deliveredItems,
         snapMm: 10,
         showMeasures: s.showMeasures,
-        roomLocked: s.roomLocked,
+        // roomLocked persist etme — kilitli dis kamera duvara yapisir
       }),
       merge: (persisted, current) => ({
         ...current,
         ...(persisted as object),
         snapMm: 10,
-        // Yeşil ekran / bozuk oturum: her yüklemede düzenleme modunda başla
+        // Yesil/gri ekran kurtarma: her yuklemede duzenleme + kilit acik
         presentationMode: false,
         presentationBackup: null,
         transformDragging: false,
+        roomLocked: false,
+        assetsOpen: false,
+        designOpen: false,
       }),
     },
   ),

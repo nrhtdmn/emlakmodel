@@ -59,8 +59,8 @@ function PresentCamera({
     const persp = camera as THREE.PerspectiveCamera
     if ('fov' in persp) {
       persp.fov = 70
-      persp.near = 0.1
-      persp.far = 200
+      persp.near = 0.05
+      persp.far = 120
       persp.updateProjectionMatrix()
     }
     const oc = orbitRef.current
@@ -420,7 +420,16 @@ function CameraConfine({ room }: { room: RoomDef }) {
   const { camera } = useThree()
 
   useFrame(() => {
+    // Duzenlemede dis kamera serbest; kilitleme sadece yururken WalkKeys'te.
+    // Burada clamp etmek kamerayi duvara yapistirip gri/yesil ekran yapiyordu.
     if (presentationMode || !locked) return
+    const { w, d } = roomSizeM(room)
+    const outside =
+      camera.position.x < -0.2 ||
+      camera.position.x > w + 0.2 ||
+      camera.position.z < -0.2 ||
+      camera.position.z > d + 0.2
+    if (outside) return
     const [x, y, z] = clampCameraInRoom(room, camera.position.x, camera.position.y, camera.position.z)
     camera.position.set(x, y, z)
   })
@@ -814,7 +823,7 @@ function FloorPlace() {
   )
 }
 
-/** Kamera: dÃ¼zenlemede dÄ±ÅŸarÄ±dan bak; gÃ¶sterimde PresentStance yerleÅŸtirir */
+/** Duzenleme: odanin disindan 3/4 bakis. Gosterimde PresentCamera yazar. */
 function CameraRig({
   room,
   orbitRef,
@@ -825,32 +834,55 @@ function CameraRig({
   const { camera } = useThree()
   const presentationMode = useAppStore((s) => s.presentationMode)
   const { w, d, h } = roomSizeM(room)
+  const applyUntil = useRef(0)
 
-  useLayoutEffect(() => {
-    if (presentationMode) return
+  const applyExterior = () => {
     const oc = orbitRef.current
-    camera.position.set(w * 0.75, h * 0.95, d * 1.35)
+    const tx = w * 0.5
+    const ty = h * 0.28
+    const tz = d * 0.5
+    // Guvenli mesafe: odaya yapismasin (yesil/gri duvar ekrani)
+    const dist = Math.max(4.5, Math.max(w, d) * 1.15)
+    camera.position.set(tx + dist * 0.42, Math.max(h * 0.75, 2.2), tz + dist * 0.78)
     camera.up.set(0, 1, 0)
+    const persp = camera as THREE.PerspectiveCamera
+    if ('fov' in persp) {
+      persp.fov = 50
+      persp.near = 0.05
+      persp.far = 120
+      persp.updateProjectionMatrix()
+    }
     if (oc) {
-      oc.target.set(w / 2, h * 0.25, d / 2)
-      oc.minDistance = 0.01
-      oc.maxDistance = 80
-      oc.minPolarAngle = 0.08
-      oc.maxPolarAngle = Math.PI - 0.08
+      oc.target.set(tx, ty, tz)
+      oc.minDistance = Math.max(1.8, Math.min(w, d) * 0.35)
+      oc.maxDistance = Math.max(28, dist * 3)
+      oc.minPolarAngle = 0.25
+      oc.maxPolarAngle = Math.PI * 0.48
       oc.enableZoom = true
       oc.enablePan = true
       oc.enableDamping = true
       oc.enabled = true
       oc.update()
+    } else {
+      camera.lookAt(tx, ty, tz)
     }
-    camera.lookAt(w / 2, h * 0.25, d / 2)
-    const persp = camera as THREE.PerspectiveCamera
-    if ('fov' in persp) {
-      persp.fov = 50
-      persp.near = 0.1
-      persp.updateProjectionMatrix()
+  }
+
+  useLayoutEffect(() => {
+    if (presentationMode) {
+      applyUntil.current = 0
+      return
     }
-  }, [camera, w, d, h, room, room.id, presentationMode, orbitRef])
+    applyExterior()
+    // OrbitControls ilk karelerde kamerayi ezmesin
+    applyUntil.current = performance.now() + 400
+  }, [camera, w, d, h, room.id, presentationMode, orbitRef])
+
+  useFrame(() => {
+    if (presentationMode) return
+    if (performance.now() > applyUntil.current) return
+    applyExterior()
+  })
 
   return null
 }
@@ -969,12 +1001,12 @@ function Scene() {
       <OrbitControls
         ref={orbitRef}
         makeDefault
-        target={[w / 2, h * 0.25, d / 2]}
-        maxPolarAngle={Math.PI - 0.08}
-        minPolarAngle={0.08}
-        minDistance={0.01}
-        maxDistance={80}
-        zoomSpeed={1.4}
+        target={[w / 2, h * 0.28, d / 2]}
+        maxPolarAngle={Math.PI * 0.48}
+        minPolarAngle={0.25}
+        minDistance={Math.max(1.8, Math.min(w, d) * 0.35)}
+        maxDistance={Math.max(28, Math.max(w, d) * 3.5)}
+        zoomSpeed={1.2}
         rotateSpeed={0.9}
         panSpeed={0.9}
         enableDamping={!presentationMode}
@@ -1231,6 +1263,7 @@ export function RoomCanvas() {
   const d = room.depthMm * MM
   const h = room.heightMm * MM
   const wrapRef = useRef<HTMLDivElement>(null)
+  const dist = Math.max(4.5, Math.max(w, d) * 1.15)
 
   return (
     <div className="immer-canvas" ref={wrapRef}>
@@ -1240,14 +1273,14 @@ export function RoomCanvas() {
         dpr={[1, 1.5]}
         resize={{ scroll: false, debounce: { resize: 0, scroll: 0 } }}
         camera={{
-          position: [w * 0.75, h * 0.95, d * 1.35],
+          position: [w * 0.5 + dist * 0.42, Math.max(h * 0.75, 2.2), d * 0.5 + dist * 0.78],
           fov: 50,
-          near: 0.001,
-          far: 200,
+          near: 0.05,
+          far: 120,
         }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false }}
         onCreated={({ camera, gl }) => {
-          camera.lookAt(w / 2, h * 0.25, d / 2)
+          camera.lookAt(w / 2, h * 0.28, d / 2)
           gl.setClearColor('#2a3330', 1)
         }}
       >

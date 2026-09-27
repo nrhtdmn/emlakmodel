@@ -7,10 +7,13 @@ const RoomCanvas = lazy(() =>
 )
 
 export function Studio() {
-  // Yesil ekran kurtarma: bozuk gosterim oturumunu kapat
+  // Yesil/gri duvar ekrani: kilit + gosterim oturumunu temizle
   useEffect(() => {
     const s = useAppStore.getState()
     if (s.presentationMode) s.setPresentationMode(false)
+    if (s.roomLocked) s.setRoomLocked(false)
+    if (s.assetsOpen) s.setAssetsOpen(false)
+    if (s.designOpen) s.setDesignOpen(false)
   }, [])
 
   return (
