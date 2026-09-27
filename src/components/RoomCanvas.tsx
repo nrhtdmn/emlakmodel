@@ -285,7 +285,8 @@ function RoomEnvironment({ room }: { room: RoomDef }) {
       ) : (
         <RoomBox room={room} />
       )}
-      <CeilingLayer room={room} />
+      {/* Duzenlemede tavan dis kamerayi kapatiyordu (gri/yesil ekran). Gosterimde acilir. */}
+      <CeilingLayer room={room} editCutaway />
     </>
   )
 }
@@ -313,8 +314,9 @@ function CeilingPlane({ room }: { room: RoomDef }) {
   )
 }
 
-function CeilingLayer({ room }: { room: RoomDef }) {
+function CeilingLayer({ room, editCutaway = false }: { room: RoomDef; editCutaway?: boolean }) {
   const [url, setUrl] = useState<string | null>(null)
+  const presentationMode = useAppStore((s) => s.presentationMode)
   const visible = isCeilingVisible(room)
 
   useEffect(() => {
@@ -336,6 +338,8 @@ function CeilingLayer({ room }: { room: RoomDef }) {
     }
   }, [room.ceilingModelUrl, visible])
 
+  // Duzenleme cutaway: tavan dis bakisi engellemesin
+  if (editCutaway && !presentationMode) return null
   if (!visible) return null
 
   // Tam oda GLB varsa varsayÄ±lan dÃ¼z tavanÄ± gÃ¶sterme; sadece Ã¶zel tavan modeli
@@ -841,9 +845,9 @@ function CameraRig({
     const tx = w * 0.5
     const ty = h * 0.12
     const tz = d * 0.5
-    // Yuksek koseden bak: duvar dis yuzeyi ekrani doldurmasin
+    // Yuksek koseden bak: oda icine (tavan duzenlemede kapali)
     const span = Math.max(w, d)
-    camera.position.set(tx + span * 0.55, Math.max(h * 1.55, span * 0.7), tz + span * 0.72)
+    camera.position.set(tx + span * 0.62, Math.max(h * 1.25, span * 0.55), tz + span * 0.8)
     camera.up.set(0, 1, 0)
     const persp = camera as THREE.PerspectiveCamera
     if ('fov' in persp) {
@@ -1163,7 +1167,7 @@ function OrbitDragAxes({ orbitRef }: { orbitRef: RefObject<OrbitControlsImpl | n
       spherical.setFromVector3(offset)
       spherical.theta += ((2 * Math.PI * dx) / h) * speed
       spherical.phi -= ((2 * Math.PI * dy) / h) * speed
-      spherical.phi = Math.max(0.08, Math.min(Math.PI - 0.08, spherical.phi))
+      spherical.phi = Math.max(0.2, Math.min(Math.PI * 0.42, spherical.phi))
       offset.setFromSpherical(spherical)
       camera.position.copy(oc.target).add(offset)
       oc.update()
@@ -1272,7 +1276,7 @@ export function RoomCanvas() {
         dpr={[1, 1.5]}
         resize={{ scroll: false, debounce: { resize: 0, scroll: 0 } }}
         camera={{
-          position: [w * 0.5 + span * 0.55, Math.max(h * 1.55, span * 0.7), d * 0.5 + span * 0.72],
+          position: [w * 0.5 + span * 0.62, Math.max(h * 1.25, span * 0.55), d * 0.5 + span * 0.8],
           fov: 50,
           near: 0.05,
           far: 120,
