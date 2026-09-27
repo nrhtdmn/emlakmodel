@@ -26,6 +26,11 @@ function clampStandingXZ(room: RoomDef, x: number, z: number, margin = 0.45): [n
   ]
 }
 
+function clampStandingY(room: RoomDef, y: number): number {
+  const { h } = roomSizeM(room)
+  return THREE.MathUtils.clamp(y, 0.4, Math.max(0.55, h - 0.25))
+}
+
 /** Gosterim: Orbit sahneede kalir; kamera ayakta tutulur */
 function PresentCamera({
   room,
@@ -128,7 +133,8 @@ function PresentCamera({
       )
         return
       if (!ready.current) return
-      const step = e.shiftKey ? 0.3 : 0.15
+      const step = e.shiftKey ? 0.28 : 0.14
+      const vert = e.shiftKey ? 0.22 : 0.12
       euler.set(pitch.current, yaw.current, 0, 'YXZ')
       forward.set(0, 0, -1).applyEuler(euler)
       forward.y = 0
@@ -136,13 +142,17 @@ function PresentCamera({
       forward.normalize()
       right.set(forward.z, 0, -forward.x)
       let moved = false
-      if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+
+      // Shift+↑↓: ileri/geri · ↑↓: aşağı/yukarı · ←→: yan
+      if (e.key === 'ArrowUp') {
         e.preventDefault()
-        pos.current.addScaledVector(forward, step)
+        if (e.shiftKey) pos.current.addScaledVector(forward, step)
+        else pos.current.y += vert
         moved = true
-      } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault()
-        pos.current.addScaledVector(forward, -step)
+        if (e.shiftKey) pos.current.addScaledVector(forward, -step)
+        else pos.current.y -= vert
         moved = true
       } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
         e.preventDefault()
@@ -152,10 +162,20 @@ function PresentCamera({
         e.preventDefault()
         pos.current.addScaledVector(right, step)
         moved = true
+      } else if (e.key === 'w' || e.key === 'W') {
+        e.preventDefault()
+        if (e.shiftKey) pos.current.y += vert
+        else pos.current.addScaledVector(forward, step)
+        moved = true
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        if (e.shiftKey) pos.current.y -= vert
+        else pos.current.addScaledVector(forward, -step)
+        moved = true
       }
       if (!moved) return
       const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
-      pos.current.set(x, STAND_EYE, z)
+      pos.current.set(x, clampStandingY(room, pos.current.y), z)
     }
     el.addEventListener('pointerdown', onDown)
     window.addEventListener('pointerup', onUp)
@@ -175,7 +195,7 @@ function PresentCamera({
     const oc = orbitRef.current
     if (oc) oc.enabled = false
     const [x, z] = clampStandingXZ(room, pos.current.x, pos.current.z)
-    pos.current.set(x, STAND_EYE, z)
+    pos.current.set(x, clampStandingY(room, pos.current.y), z)
     camera.position.copy(pos.current)
     euler.set(pitch.current, yaw.current, 0, 'YXZ')
     quat.setFromEuler(euler)
