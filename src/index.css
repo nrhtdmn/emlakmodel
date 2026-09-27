@@ -1158,11 +1158,54 @@ img {
   z-index: 5;
 }
 
-.immer-present {
-  flex-direction: row;
+.immer-present-help {
+  position: absolute;
+  left: 50%;
+  top: 4.5rem;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
   align-items: center;
+  gap: 0.45rem;
+  pointer-events: none;
+}
+
+.immer-present-help > * {
+  pointer-events: auto;
+}
+
+.immer-present-b {
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 10px;
+  border: 1px solid var(--sage);
+  background: rgba(15, 26, 21, 0.9);
+  color: var(--sage);
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.immer-present-b:hover,
+.immer-present-b.on {
+  background: rgba(42, 51, 48, 0.95);
+  color: #e8efe6;
+  border-color: var(--copper);
+}
+
+.immer-present {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: center;
-  gap: 0.75rem;
+  gap: 0.35rem;
   border-color: var(--sage);
   width: auto;
   max-width: min(420px, 92vw);

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { CATALOG, CATEGORY_LABELS, formatTRY, type Category } from '../data/catalog'
 import { WALL_LABELS, isCeilingVisible, isWallHidden, type WallIndex } from '../data/house'
 import { calcTotals, resolveItem, useAppStore } from '../store/useAppStore'
@@ -54,6 +54,11 @@ export function ImmersiveHud() {
   const undo = useAppStore((s) => s.undo)
   const redo = useAppStore((s) => s.redo)
   const resetProject = useAppStore((s) => s.resetProject)
+  const [presentHelpOpen, setPresentHelpOpen] = useState(false)
+
+  useEffect(() => {
+    if (!presentationMode) setPresentHelpOpen(false)
+  }, [presentationMode])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -396,9 +401,22 @@ export function ImmersiveHud() {
       {designOpen && !presentationMode && <HouseDesignPanel />}
 
       {presentationMode && (
-        <div className="immer-status immer-present">
-          <strong>Gösterim · göz hizası</strong>
-          <span>Sürükle bak · ↑↓ ileri/geri · Shift+↑↓ yukarı/aşağı · ←→ yan</span>
+        <div className="immer-present-help">
+          <button
+            type="button"
+            className={`immer-present-b ${presentHelpOpen ? 'on' : ''}`}
+            title="Gezinti yardımı"
+            aria-expanded={presentHelpOpen}
+            onClick={() => setPresentHelpOpen((v) => !v)}
+          >
+            B
+          </button>
+          {presentHelpOpen && (
+            <div className="immer-status immer-present" role="status">
+              <strong>Gösterim · göz hizası</strong>
+              <span>Sürükle bak · ↑↓ ileri/geri · Shift+↑↓ yukarı/aşağı · ←→ yan</span>
+            </div>
+          )}
         </div>
       )}
 
